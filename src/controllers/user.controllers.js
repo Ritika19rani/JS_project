@@ -38,7 +38,7 @@ const registerUser=asyncHandler(async(req,res)=>{
     if(existedUser){
         throw new ApiError(409,"username or email already exists")
     }
-    //console.log(req.files) <- to do
+    // console.log(req.files) // <- to do
 
     //check for img/avatar
     const avatarLocalPath = req.files?.avatar[0]?.path;
@@ -84,9 +84,11 @@ const registerUser=asyncHandler(async(req,res)=>{
    return res.status(201).json(
     new ApiResponse(200,createdUser,"user registered Successfully")
    )
+})
 
-   const loginUser = asyncHandler(async(req,res)=>{
-        //to do
+const loginUser =asyncHandler(async(req,res)=>{
+
+    //to do
         //req.body-> get data
         //username or email pr login krwana h
         //find the user
@@ -94,11 +96,30 @@ const registerUser=asyncHandler(async(req,res)=>{
         //generate access & refresh token
         //send through cookie
         //send res
-   })
+
+
+    //get data from req.body
+    const {email,username,password} =req.body
+    
+    if(!username || email){
+        throw new ApiError(400,"username or email is required")
+    }
+
+    //with the help of this code we can login either using username or email syntax->"$or"
+    const user = await User.findOne({
+        $or:[{username},{email}]
+    })
+    
+    //find the user
+    if(!user){
+        throw new ApiError(404,"User doesn't exist")
+    }
+
+    //password check
 
 })
-
+   
 export {
     registerUser,
-    // loginUser
+    loginUser
 }
