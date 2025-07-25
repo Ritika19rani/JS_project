@@ -8,7 +8,9 @@ const connectDB=async ()=>{
        
     } catch (error) {
         console.log("MONGODB connection error",error);
-        process.exit(1)
+        process.exit(1) //It is a command in Node.js 
+                        //that forcibly stops the program and tells the operating system that the process exited with an error.
+                       //0 means success & 1 means error
     }
 }
 

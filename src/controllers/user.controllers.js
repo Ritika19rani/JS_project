@@ -4,6 +4,8 @@ import {User} from "../models/user.model.js"
 import {uploadOnCloudinary} from "../utils/cloudinary.js"
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken"
+import { subscribe } from "diagnostics_channel";
+import mongoose from "mongoose";
 
 const generateAccessAndRefreshToken = async (userId)=>{
     try {
@@ -36,19 +38,25 @@ const registerUser=asyncHandler(async(req,res)=>{
     const {username,fullName,email,password} =req.body
     // console.log("email",email);
      
-    //can write this but using more optimized code because using this below code we have to write it for all(fullName,username,email....etc) and that will make our code boring
+    //can write this but using more optimized code because using this below code we have to write it for all(fullName,username,email....etc)
+    //  and that will make our code boring and lengthy
+
     // if(fullName===""){
     //     throw new ApiError(400,"Full Name is required")
     // }
 
     //optimized one(all are filled or not)
+    //.some()->It checks if at least one item in the array meets a condition,returns true or false.
+    //?->it is optional chaining
+    //.trim() removes extra spaces from the start and end of a string.
+
     if (
         [fullName,email,username,password].some((field)=>field?.trim() === "")
     ) {
         throw new ApiError(400,"All fields are required")
     }
 
-    //check if user already or not
+    //check if user already or not either using username or email
     const existedUser = await User.findOne({
         $or:[{username},{email}]
     })
@@ -58,7 +66,12 @@ const registerUser=asyncHandler(async(req,res)=>{
     // console.log(req.files) // <- to do
 
     //check for img/avatar
+    //req.files->Refers to the uploaded files in the request
+    //.path->Gets the file path on the server where the file was stored.
     const avatarLocalPath = req.files?.avatar[0]?.path;
+
+    //not using below code for coverImage bcz for avatar we are checking that and throws error if file is not uploaded
+    //but we are not doing that for coverImage so using diff code
     // const coverImageLocalPath=req.files?.coverImage[0]?.path;
 
     let coverImageLocalPath;
@@ -91,6 +104,7 @@ const registerUser=asyncHandler(async(req,res)=>{
    
    //mongodb add _id to all the entries
    //so we use that to remove the 'password' and 'refreshToken'
+   //.select->method to remove which is written (password || refersh token) inside it
    const createdUser = await User.findById(user._id).select("-password -refreshToken")
 
    if(!createdUser){
@@ -98,7 +112,8 @@ const registerUser=asyncHandler(async(req,res)=>{
    }
 
    return res
-   return res.status(201).json(
+   .status(201)
+   .json(
         new ApiResponse(200, createdUser, "User registered Successfully")
     )
 
@@ -149,7 +164,7 @@ const loginUser =asyncHandler(async(req,res)=>{
 
     //send through cookie
    const options = {
-    httpOnly: true,  //with the help of this we can modity our cookie using http but only server can do it
+    httpOnly: true,  //with the help of this we can modify our cookie using http but only server can do it
     secure: true
    }
 
@@ -167,8 +182,8 @@ const logoutUser=asyncHandler(async(req,res)=>{
     await User.findByIdAndUpdate(
         req.user._id,
         {
-            $set:{
-                refreshToken:1
+            $unset:{
+                refreshToken:1 //this removes the field from document
             }
         },
         {
@@ -257,7 +272,9 @@ const changeCurrentPassword = asyncHandler( async (req,res) => {
 const getCurrentUser = asyncHandler(async(req,res)=>{
        return res
        .status(200)
-       .json(200,req.user,"current user fetched successfully")
+       .json(
+           new ApiResponse(200,req.user,"current user fetched successfully")
+       )
 })
 
 const updateAccountDetails = asyncHandler(async(req,res)=>{
@@ -267,7 +284,7 @@ const updateAccountDetails = asyncHandler(async(req,res)=>{
         throw new ApiError(400,"All fields are required")
        }
        
-       const user = User.findByIdAndUpdate(req.user?._id,{
+       const user = await User.findByIdAndUpdate(req.user?._id,{
           $set:{
             fullName,
             email:email
@@ -346,6 +363,129 @@ const updateUserCoverImage = asyncHandler(async(req,res)=>{
         new ApiError(200,user,"cover image updated successfully")
     )
 })
+
+const getUserChannelProfile = asyncHandler( async (req,res) => {
+       const {username} = req.params
+
+       if(!username?.trim){
+          throw new ApiError(40,"username is missing")
+       }
+
+      const channel =  await User.aggregate([
+        {
+            $match:{
+                username:username?.toLowerCase()
+            }
+        },
+        {
+            $lookup:{
+                from:"subscriptions",
+                localField:"_id",
+                foreignField:"channel",
+                as:"subscribers"
+            }
+        },
+        {
+            $lookup:{
+                from:"subscriptions",
+                localField:"_id",
+                foreignField:"subscriber",
+                as:"subscriberedTo"
+            }
+        },
+        {
+            $addFields:{
+                subscribersCount:{
+                    $size:"$subscribers"
+                }
+            },
+            channelSubscribedToCount:{
+                $size:"$subscribedTo"
+            },
+            
+                isSubscribed:{
+                    $second:{
+                        if:{$in:[req.user?._id,"$subscribers.subscribers"]},
+                        then:true,
+                        else:false
+                    }
+                }
+            
+        },
+       
+        {
+            $project:{
+                fullName:1,
+                username:1,
+                subscribersCount:1,
+                isSubscribed:1,
+                channelSubscribedToCount:1,
+                avatar:1,
+                coverImage:1,
+                email:1
+            }
+        }
+    ])
+
+    if(!channel?.length){
+        throw new ApiError(404,"channel doesn't exists")
+    }
+
+    return res
+    .status(200)
+    .json(
+        new ApiResponse(200,channel[0],"user channel fetched successfully")
+    )
+})
+
+const getWatchHistory = asyncHandler(async(req,res)=>{
+       const user = await User.aggregate([
+        {
+            $match:{
+                _id:new mongoose.Types.ObjectId(req.user._id)
+            }
+        },{
+            $lookup:{
+                from:"Videos",
+                localField:"watchHistory",
+                foreignField:"_id",
+                as:"watchHistory",
+                pipeline:[
+                    {
+                        $lookup:{
+                            from:"users",
+                            localField:"owner",
+                            foreignField:"_id",
+                            as:"owner",
+                            pipeline:[
+                                {
+                                    $project:{
+                                        fullName:1,
+                                        username:1,
+                                        avatar:1
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                       $addFields:{
+                         owner:{
+                            $first:"$owner"
+                         }
+                       }
+                    }
+                ]
+            }
+        }
+       ])
+
+       return res
+       .status(200)
+       .json(
+            new ApiResponse(200,user[0].WatchHistory,"watch history fetched successfully")
+       )
+})
    
 export {
     registerUser,
@@ -356,5 +496,7 @@ export {
     getCurrentUser,
     updateAccountDetails,
     updateUserAvatar,
-    updateUserCoverImage
+    updateUserCoverImage,
+    getUserChannelProfile,
+    getWatchHistory
 }
